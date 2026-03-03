@@ -47,17 +47,17 @@ pub async fn register(
     let user_id = Uuid::new_v4().to_string();
     let now = Utc::now();
 
-    sqlx::query(
+    sqlx::query!(
         r#"
         INSERT INTO users (id, login, password_hash, role, created_at, updated_at)
         VALUES ($1, $2, $3, 'user', $4, $5)
         "#,
+        &user_id,
+        &payload.login,
+        &password_hash,
+        now,
+        now,
     )
-    .bind(&user_id)
-    .bind(&payload.login)
-    .bind(&password_hash)
-    .bind(now)
-    .bind(now)
     .execute(&state.db)
     .await
     .map_err(|e| match e {
@@ -77,16 +77,16 @@ pub async fn register(
     let expires_at =
         Utc::now() + chrono::Duration::days(state.config.refresh_token_expiration_days);
 
-    sqlx::query(
+    sqlx::query!(
         r#"
         INSERT INTO sessions (id, user_id, refresh_token_hash, expires_at)
         VALUES ($1, $2, $3, $4)
         "#,
+        &session_id,
+        &user_id,
+        &refresh_hash,
+        expires_at,
     )
-    .bind(&session_id)
-    .bind(&user_id)
-    .bind(&refresh_hash)
-    .bind(expires_at)
     .execute(&state.db)
     .await
     .map_err(|e| AppError::DatabaseError(e.to_string()))?;
@@ -187,16 +187,16 @@ pub async fn login(
         }
     )?;
 
-    sqlx::query(
+    sqlx::query!(
         r#"
         INSERT INTO sessions (id, user_id, refresh_token_hash, expires_at)
         VALUES ($1, $2, $3, $4)
         "#,
+        &session_id,
+        &user.id,
+        &refresh_hash,
+        &expires_at,
     )
-    .bind(&session_id)
-    .bind(&user.id)
-    .bind(&refresh_hash)
-    .bind(expires_at)
     .execute(&state.db)
     .await
     .map_err(|e| AppError::DatabaseError(e.to_string()))?;
@@ -263,10 +263,11 @@ pub async fn refresh_token(
     let claims = state.token_manager.validate_refresh_token(&refresh_token)?;
 
     // Ищем сессию в БД
-    let session: Session = sqlx::query_as(
-        "SELECT id, user_id, refresh_token_hash, expires_at, created_at FROM sessions WHERE id = $1"
+    let session = sqlx::query_as!(
+        Session,
+        "SELECT id, user_id, refresh_token_hash, expires_at, created_at FROM sessions WHERE id = $1",
+        &claims.sub
     )
-    .bind(&claims.sub)
     .fetch_optional(&state.db)
     .await
     .map_err(|e| AppError::DatabaseError(e.to_string()))?
@@ -275,8 +276,7 @@ pub async fn refresh_token(
     // Проверяем срок действия сессии
     if session.expires_at < Utc::now() {
         // Удаляем просроченную сессию
-        sqlx::query("DELETE FROM sessions WHERE id = $1")
-            .bind(&session.id)
+        sqlx::query!("DELETE FROM sessions WHERE id = $1", &session.id)
             .execute(&state.db)
             .await
             .ok();
@@ -295,8 +295,7 @@ pub async fn refresh_token(
     .ok_or_else(|| AppError::UserNotFound("User not found".to_string()))?;
 
     // Удаляем старую сессию
-    sqlx::query("DELETE FROM sessions WHERE id = $1")
-        .bind(&session.id)
+    sqlx::query!("DELETE FROM sessions WHERE id = $1", &session.id)
         .execute(&state.db)
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
@@ -313,16 +312,16 @@ pub async fn refresh_token(
     let expires_at =
         Utc::now() + chrono::Duration::days(state.config.refresh_token_expiration_days);
 
-    sqlx::query(
+    sqlx::query!(
         r#"
         INSERT INTO sessions (id, user_id, refresh_token_hash, expires_at)
         VALUES ($1, $2, $3, $4)
         "#,
+        &new_session_id,
+        &user.id,
+        &new_refresh_hash,
+        expires_at,
     )
-    .bind(&new_session_id)
-    .bind(&user.id)
-    .bind(&new_refresh_hash)
-    .bind(expires_at)
     .execute(&state.db)
     .await
     .map_err(|e| AppError::DatabaseError(e.to_string()))?;
@@ -386,8 +385,7 @@ pub async fn logout(
                 .token_manager
                 .validate_refresh_token(refresh_cookie.value())
         {
-            sqlx::query("DELETE FROM sessions WHERE id = $1")
-                .bind(&claims.sub)
+            sqlx::query!("DELETE FROM sessions WHERE id = $1", &claims.sub)
                 .execute(&state.db)
                 .await
                 .ok();
